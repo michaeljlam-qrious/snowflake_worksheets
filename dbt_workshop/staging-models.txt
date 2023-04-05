@@ -1,0 +1,25 @@
+use pc_dbt_db.analytics_marts
+
+select * 
+  from stg_knoema_stock_history
+ where company_symbol ='AAPL' 
+   and stock_date ='2021-03-01';
+
+select * 
+from int_daily_position_with_trades
+where trader = 'Tina M.'
+order by  book_date;
+
+with cst as
+(
+    select
+        company_symbol||stock_date as conctat
+    from int_knoema_stock_history
+    where company_symbol||stock_date is not null
+    group by company_symbol||stock_date
+    having count(*) > 1 
+    limit 1
+)
+ 
+select * from int_knoema_stock_history
+where company_symbol||stock_date IN (SELECT conctat FROM cst);
