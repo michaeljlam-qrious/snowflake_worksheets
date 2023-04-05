@@ -4,3 +4,5 @@ LANGUAGE SQL
 AS 'select initcap(instr)';
 
 select NEUTRALIZE_WHINING('abkk dkdjld');
+
+set alterenating_caps_phrase = 'aLtErNaTiNg CaPs!'
