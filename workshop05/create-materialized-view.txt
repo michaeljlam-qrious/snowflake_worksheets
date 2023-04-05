@@ -1,0 +1,4 @@
+drop materialized view smv_cherry_creek_trail;
+create materialized view smv_cherry_creek_trail
+    -- comment = '<comment>'
+    as select * from T_CHERRY_CREEK_TRAIL;
