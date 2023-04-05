@@ -1,0 +1,255 @@
+alter database sfsales_sample_data rename to snowflake_sample_data;
+
+GRANT IMPORTED PRIVILEGES
+ON DATABASE SNOWFLAKE_SAMPLE_DATA
+TO ROLE SYSADMIN;
+
+--Check the range of values in the Market Segment Column
+SELECT DISTINCT c_mktsegment
+FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.CUSTOMER;
+
+--Find out which Market Segments have the most customers
+SELECT c_mktsegment, COUNT(*)
+FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.CUSTOMER
+GROUP BY c_mktsegment
+ORDER BY COUNT(*);
+
+-- Nations Table
+SELECT N_NATIONKEY, N_NAME, N_REGIONKEY
+FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.NATION;
+
+-- Regions Table
+SELECT R_REGIONKEY, R_NAME
+FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.REGION;
+
+-- Join the Tables and Sort
+SELECT R_NAME as Region, N_NAME as Nation
+FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.NATION 
+JOIN SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.REGION 
+ON N_REGIONKEY = R_REGIONKEY
+ORDER BY R_NAME, N_NAME ASC;
+
+--Group and Count Rows Per Region
+SELECT R_NAME as Region, count(N_NAME) as NUM_COUNTRIES
+FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.NATION 
+JOIN SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.REGION 
+ON N_REGIONKEY = R_REGIONKEY
+GROUP BY R_NAME;
+
+
+USE ROLE SYSADMIN;
+CREATE DATABASE INTL_DB;
+USE SCHEMA INTL_DB.PUBLIC;
+
+CREATE WAREHOUSE INTL_WH 
+WITH WAREHOUSE_SIZE = 'XSMALL' 
+WAREHOUSE_TYPE = 'STANDARD' 
+AUTO_SUSPEND = 600 
+AUTO_RESUME = TRUE;
+
+USE WAREHOUSE INTL_WH;
+
+
+CREATE OR REPLACE TABLE INTL_DB.PUBLIC.INT_STDS_ORG_3661 
+(ISO_COUNTRY_NAME varchar(100), 
+ COUNTRY_NAME_OFFICIAL varchar(200), 
+ SOVEREIGNTY varchar(40), 
+ ALPHA_CODE_2DIGIT varchar(2), 
+ ALPHA_CODE_3DIGIT varchar(3), 
+ NUMERIC_COUNTRY_CODE integer,
+ ISO_SUBDIVISION varchar(15), 
+ INTERNET_DOMAIN_CODE varchar(10)
+);
+
+CREATE OR REPLACE FILE FORMAT INTL_DB.PUBLIC.PIPE_DBLQUOTE_HEADER_CR 
+  TYPE = 'CSV' 
+  COMPRESSION = 'AUTO' 
+  FIELD_DELIMITER = '|' 
+  RECORD_DELIMITER = '\r' 
+  SKIP_HEADER = 1 
+  FIELD_OPTIONALLY_ENCLOSED_BY = '\042' 
+  TRIM_SPACE = FALSE 
+  ERROR_ON_COLUMN_COUNT_MISMATCH = TRUE 
+  ESCAPE = 'NONE' 
+  ESCAPE_UNENCLOSED_FIELD = '\134'
+  DATE_FORMAT = 'AUTO' 
+  TIMESTAMP_FORMAT = 'AUTO' 
+  NULL_IF = ('\\N');
+
+  create stage intl_db.public.like_a_window_into_an_s3_bucket
+url = 's3://uni-lab-files';
+
+list @like_a_window_into_an_s3_bucket;
+
+copy into INT_STDS_ORG_3661
+from @like_a_window_into_an_s3_bucket
+files = ( 'smew/ISO_Countries_UTF8_pipe.csv')
+file_format = ( format_name='PIPE_DBLQUOTE_HEADER_CR' );
+
+SELECT count(*) as FOUND, '249' as EXPECTED 
+FROM INTL_DB.PUBLIC.INT_STDS_ORG_3661; 
+
+
+select row_count
+from INTL_DB.INFORMATION_SCHEMA.TABLES 
+where table_schema='PUBLIC'
+and table_name= 'INT_STDS_ORG_3661';
+
+CREATE VIEW NATIONS_SAMPLE_PLUS_ISO 
+( iso_country_name
+  ,country_name_official
+  ,alpha_code_2digit
+  ,region) AS
+  SELECT  
+    iso_country_name
+    , country_name_official,alpha_code_2digit
+    ,r_name as region
+FROM INTL_DB.PUBLIC.INT_STDS_ORG_3661 i
+LEFT JOIN SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.NATION n
+ON UPPER(i.iso_country_name)=n.n_name
+LEFT JOIN SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.REGION r
+ON n_regionkey = r_regionkey;
+
+SELECT *
+FROM INTL_DB.PUBLIC.NATIONS_SAMPLE_PLUS_ISO;
+
+CREATE TABLE INTL_DB.PUBLIC.CURRENCIES 
+(
+  CURRENCY_ID INTEGER, 
+  CURRENCY_CHAR_CODE varchar(3), 
+  CURRENCY_SYMBOL varchar(4), 
+  CURRENCY_DIGITAL_CODE varchar(3), 
+  CURRENCY_DIGITAL_NAME varchar(30)
+)
+  COMMENT = 'Information about currencies including character codes, symbols, digital codes, etc.';
+
+CREATE TABLE INTL_DB.PUBLIC.COUNTRY_CODE_TO_CURRENCY_CODE 
+  (
+    COUNTRY_CHAR_CODE Varchar(3), 
+    COUNTRY_NUMERIC_CODE INTEGER, 
+    COUNTRY_NAME Varchar(100), 
+    CURRENCY_NAME Varchar(100), 
+    CURRENCY_CHAR_CODE Varchar(3), 
+    CURRENCY_NUMERIC_CODE INTEGER
+  ) 
+  COMMENT = 'Many to many code lookup table';
+
+    CREATE FILE FORMAT INTL_DB.PUBLIC.CSV_COMMA_LF_HEADER
+  TYPE = 'CSV'
+  COMPRESSION = 'AUTO' 
+  FIELD_DELIMITER = ',' 
+  RECORD_DELIMITER = '\n' 
+  SKIP_HEADER = 1 
+  FIELD_OPTIONALLY_ENCLOSED_BY = 'NONE' 
+  TRIM_SPACE = FALSE 
+  ERROR_ON_COLUMN_COUNT_MISMATCH = TRUE 
+  ESCAPE = 'NONE' 
+  ESCAPE_UNENCLOSED_FIELD = '\134' 
+  DATE_FORMAT = 'AUTO' 
+  TIMESTAMP_FORMAT = 'AUTO' 
+  NULL_IF = ('\\N');
+
+copy into CURRENCIES
+from @like_a_window_into_an_s3_bucket
+files = ( 'smew/currencies.csv')
+file_format = ( format_name='CSV_COMMA_LF_HEADER' );
+
+create view SIMPLE_CURRENCY AS 
+SELECT COUNTRY_CHAR_CODE CITY_CODE, CURRENCY_CHAR_CODE CUR_CODE FROM COUNTRY_CODE_TO_CURRENCY_CODE;
+
+use role accountadmin;
+grant override share restrictions on account to role accountadmin;
+
+SELECT current_account();
+
+ALTER VIEW INTL_DB.PUBLIC.NATIONS_SAMPLE_PLUS_ISO
+SET SECURE; 
+
+ALTER VIEW INTL_DB.PUBLIC.SIMPLE_CURRENCY
+SET SECURE;
+
+SHOW MANAGED ACCOUNTS;
+
+USE ROLE ACCOUNTADMIN;
+SHOW RESOURCE MONITORS;
+
+use role SYSADMIN;
+--Caden set up a new database (and you will, too)
+create database ACME;
+
+--did Snowflake set your worksheet database to the new database? 
+--if not, you can do it yourself.
+use database ACME;
+
+--get rid of the public schema - too generic
+drop schema PUBLIC;
+
+--When creating shares it is best to have multiple schemas
+create schema ACME.SALES;
+create schema ACME.STOCK;
+create schema ACME.ADU; --this is the schema they'll use to share to ADU, Max's company
+
+--Lottie's team will enter new stock into this table when inventory is received
+-- the Date_Sold and Customer_Id will be null until the car is sold
+create or replace table ACME.STOCK.LOTSTOCK
+(
+ VIN VARCHAR(17)
+,EXTERIOR VARCHAR(50)	
+,INTERIOR VARCHAR(50)
+,DATE_SOLD DATE
+,CUSTOMER_ID NUMBER(20)
+);
+
+--This secure view breaks the VIN into digestible components
+--this view only shares unsold cars because the unsold cars
+--are the ones that need to be enhanced
+create or replace secure view ACME.ADU.LOTSTOCK 
+AS (
+SELECT VIN
+  , LEFT(VIN,3) as WMI
+  , SUBSTR(VIN,4,5) as VDS
+  , SUBSTR(VIN,10,1) as MODYEARCODE
+  , SUBSTR(VIN,11,1) as PLANTCODE
+  , EXTERIOR
+  , INTERIOR
+FROM ACME.STOCK.LOTSTOCK
+WHERE DATE_SOLD is NULL
+);
+
+create file format ACME.STOCK.COMMA_SEP_HEADERROW 
+TYPE = 'CSV' 
+COMPRESSION = 'AUTO' 
+FIELD_DELIMITER = ',' 
+RECORD_DELIMITER = '\n' 
+SKIP_HEADER = 1 
+FIELD_OPTIONALLY_ENCLOSED_BY = '\042'  
+TRIM_SPACE = TRUE 
+ERROR_ON_COLUMN_COUNT_MISMATCH = TRUE 
+ESCAPE = 'NONE' 
+ESCAPE_UNENCLOSED_FIELD = '\134' 
+DATE_FORMAT = 'AUTO' 
+TIMESTAMP_FORMAT = 'AUTO' 
+NULL_IF = ('\\N');
+
+LIST @demo_db.public.like_a_window_into_an_s3_bucket;
+
+COPY INTO acme.stock.lotstock
+from @garden_plants.veggies.like_a_window_into_an_s3_bucket
+files = ('smew/Lotties_LotStock_Data.csv')
+file_format =(format_name=ACME.STOCK.COMMA_SEP_HEADERROW);
+
+select * from acme.stock.lotstock;
+
+select * from acme.adu.lotstock;
+
+create share "ACME_DETROIT"
+COMMENT='Lot stock for enhancement by ADU';
+
+GRANT USAGE ON DATABSE "ACME"
+TO SHARE "ACME_DETROIT";
+
+GRANT USAGE ON SCHEMA "ACME"."ADU"
+TO SHARE "ACME_DETROIT";
+
+GRANT SELECT ON VIEW "ACME"."ADU"."LOTSTOCK"
+TO SHARE "ACME_DETROIT";
