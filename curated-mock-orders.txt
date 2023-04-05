@@ -1,0 +1,14 @@
+grant all privileges on database analytics to role sysadmin;
+
+create or replace table analytics.curated.mock_orders (
+    order_id integer,
+    status varchar (100),
+    created_at date,
+    updated_at date
+);
+
+insert into analytics.curated.mock_orders (order_id, status, created_at, updated_at)
+values (1, 'delivered', '2020-01-01', '2020-01-05'),
+       (2, 'delivered', '2020-01-02', '2020-01-05'),
+       (3, 'delivered', '2020-01-03', '2020-01-05'),
+       (4, 'delivered', '2020-01-04', '2020-01-05');
