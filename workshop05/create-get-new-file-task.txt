@@ -1,0 +1,5 @@
+create or replace task AGS_GAME_AUDIENCE.RAW.GET_NEW_FILES
+	USER_TASK_MANAGED_INITIAL_WAREHOUSE_SIZE = 'XSMALL'
+	schedule='5 minute'
+	as copy into pipeline_logs
+from @uni_kishore_pipeline file_format = (format_name=ff_json_logs);
