@@ -1,0 +1,2 @@
+create stage my_internal_named_stage;
+show stages in account;
