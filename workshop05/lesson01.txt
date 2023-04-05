@@ -1,0 +1,208 @@
+select current_account();
+
+create database ags_game_audience;
+
+create schema raw;
+
+drop schema public;
+
+create table game_logs(raw_log variant);
+
+create stage uni_kishore
+url = 's3://uni-kishore';
+
+list @uni_kishore/kickoff;
+
+create file format ff_json_logs
+type = json
+strip_outer_array = true;
+
+select $1 from @uni_kishore/kickoff (file_format => ff_json_logs);
+
+copy into game_logs
+from @uni_kishore/kickoff file_format = (format_name=ff_json_logs);
+
+select * from game_logs;
+
+create or replace view logs as
+select raw_log:user_event::text as user_event
+,raw_log:user_login::text as user_login
+,raw_log:datetime_iso8601::timestamp_ntz as datetime_iso8601
+,raw_log:ip_address::text as ip_address
+,raw_log
+from game_logs
+where ip_address is not null;
+
+select * from logs;
+
+select current_timestamp();
+
+alter session set timezone = 'UTC';
+
+select current_timestamp();
+
+show parameters like 'timezone';
+
+list @uni_kishore;
+
+select get_ddl('table','ags_game_audience.raw.game_logs');
+
+truncate table game_logs;
+
+copy into game_logs
+from @uni_kishore/updated_feed file_format = (format_name=ff_json_logs);
+
+--looking for empty AGENT column
+select * 
+from ags_game_audience.raw.LOGS
+where agent is null;
+
+--looking for non-empty IP_ADDRESS column
+select 
+RAW_LOG:ip_address::text as IP_ADDRESS
+,*
+from ags_game_audience.raw.LOGS
+where RAW_LOG:ip_address::text is not null;
+
+select * from logs where user_login like '%prajina%';
+
+select parse_ip(ip_address,'inet'):family from logs where user_login like '%prajina%';
+
+create schema enhanced;
+
+--Look up Kishore and Prajina's Time Zone in the IPInfo share using his headset's IP Address with the PARSE_IP function.
+select start_ip, end_ip, start_ip_int, end_ip_int, city, region, country, timezone
+from IPINFO_GEOLOC.demo.location
+where parse_ip('100.41.16.160', 'inet'):ipv4 --Kishore's Headset's IP Address
+BETWEEN start_ip_int AND end_ip_int;
+
+--Join the log and location tables to add time zone to each row using the PARSE_IP function.
+select logs.*
+       , loc.city
+       , loc.region
+       , loc.country
+       , loc.timezone
+from AGS_GAME_AUDIENCE.RAW.LOGS logs
+join IPINFO_GEOLOC.demo.location loc
+where parse_ip(logs.ip_address, 'inet'):ipv4 
+BETWEEN start_ip_int AND end_ip_int;
+
+--Use two functions supplied by IPShare to help with an efficient IP Lookup Process!
+SELECT logs.ip_address
+, logs.user_login
+, logs.user_event
+, logs.datetime_iso8601
+, city
+, region
+, country
+, timezone
+, convert_timezone('UTC',timezone,logs.datetime_iso8601) as game_event_ltz
+, dayname(game_event_ltz) dow_name
+, tod_name
+from AGS_GAME_AUDIENCE.RAW.LOGS logs
+JOIN IPINFO_GEOLOC.demo.location loc 
+ON IPINFO_GEOLOC.public.TO_JOIN_KEY(logs.ip_address) = loc.join_key
+AND IPINFO_GEOLOC.public.TO_INT(logs.ip_address) 
+BETWEEN start_ip_int AND end_ip_int
+JOIN (select tod_name, listagg(hour,',') hr_list from time_of_day_lu group by tod_name) tod
+on hour(game_event_ltz) in hr_list; 
+--and user_login like '%prajina%';
+
+create table ags_game_audience.raw.time_of_day_lu
+(  hour number
+   ,tod_name varchar(25)
+);
+
+--insert statement to add all 24 rows to the table
+insert into time_of_day_lu
+values
+(6,'Early morning'),
+(7,'Early morning'),
+(8,'Early morning'),
+(9,'Mid-morning'),
+(10,'Mid-morning'),
+(11,'Late morning'),
+(12,'Late morning'),
+(13,'Early afternoon'),
+(14,'Early afternoon'),
+(15,'Mid-afternoon'),
+(16,'Mid-afternoon'),
+(17,'Late afternoon'),
+(18,'Late afternoon'),
+(19,'Early evening'),
+(20,'Early evening'),
+(21,'Late evening'),
+(22,'Late evening'),
+(23,'Late evening'),
+(0,'Late at night'),
+(1,'Late at night'),
+(2,'Late at night'),
+(3,'Toward morning'),
+(4,'Toward morning'),
+(5,'Toward morning');
+
+--Check your table to see if you loaded it properly
+select tod_name, listagg(hour,',') 
+from time_of_day_lu
+group by tod_name;
+
+
+
+create table ags_game_audience.enhanced.logs_enhanced as(
+SELECT logs.ip_address
+, logs.user_login as gamer_name
+, logs.user_event as game_event_name
+, logs.datetime_iso8601 as game_event_utc
+, city
+, region
+, country
+, timezone as gamer_ltz_name
+, convert_timezone('UTC',timezone,logs.datetime_iso8601) as game_event_ltz
+, dayname(game_event_ltz) dow_name
+, tod_name
+from AGS_GAME_AUDIENCE.RAW.LOGS logs
+JOIN IPINFO_GEOLOC.demo.location loc 
+ON IPINFO_GEOLOC.public.TO_JOIN_KEY(logs.ip_address) = loc.join_key
+AND IPINFO_GEOLOC.public.TO_INT(logs.ip_address) 
+BETWEEN start_ip_int AND end_ip_int
+JOIN time_of_day_lu as tod
+on hour(convert_timezone('UTC',timezone,logs.datetime_iso8601)) = tod.hour 
+);
+
+grant execute task on account to role sysadmin;
+
+execute task AGS_GAME_AUDIENCE.RAW.LOAD_LOGS_ENHANCED;
+
+select count(*) from ags_game_audience.enhanced.logs_enhanced;
+
+--the SHOW command might come in handy to look at the task 
+show tasks in account;
+
+--you can also look at any task more in depth using DESCRIBE
+describe task AGS_GAME_AUDIENCE.RAW.LOAD_LOGS_ENHANCED;
+
+--first we dump all the rows out of the table
+truncate table ags_game_audience.enhanced.LOGS_ENHANCED;
+
+--then we put them all back in
+INSERT INTO ags_game_audience.enhanced.LOGS_ENHANCED (
+SELECT logs.ip_address 
+, logs.user_login as GAMER_NAME
+, logs.user_event as GAME_EVENT_NAME
+, logs.datetime_iso8601 as GAME_EVENT_UTC
+, city
+, region
+, country
+, timezone as GAMER_LTZ_NAME
+, CONVERT_TIMEZONE( 'UTC',timezone,logs.datetime_iso8601) as game_event_ltz
+, DAYNAME(game_event_ltz) as DOW_NAME
+, TOD_NAME
+from ags_game_audience.raw.LOGS logs
+JOIN ipinfo_geoloc.demo.location loc 
+ON ipinfo_geoloc.public.TO_JOIN_KEY(logs.ip_address) = loc.join_key
+AND ipinfo_geoloc.public.TO_INT(logs.ip_address) 
+BETWEEN start_ip_int AND end_ip_int
+JOIN ags_game_audience.raw.TIME_OF_DAY_LU tod
+ON HOUR(CONVERT_TIMEZONE( 'UTC',timezone,logs.datetime_iso8601)) = tod.hour);
+
+--we should do this every 5 minutes from now until the next millenium - Y3K!!!
