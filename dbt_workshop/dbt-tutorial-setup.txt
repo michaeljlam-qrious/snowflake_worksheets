@@ -1,3 +1,5 @@
+use pc_dbt_db.public
+
 create warehouse transforming with warehouse_size='medium';
 
 create role transformer;
