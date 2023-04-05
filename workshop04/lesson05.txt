@@ -1,0 +1,232 @@
+create or replace stage trails_parquet
+url = 's3://uni-lab-files-more/dlkw/trails/trails_parquet';
+
+list @trails_parquet;
+
+create file format ff_json type = JSON;
+
+create secure view cherry_creek_trail as
+select $1:sequence_1 as point_id
+,$1:trail_name::varchar as trail_name
+,$1:latitude::number(11,8) as lng
+,$1:longitude::number(11,8) as lat
+from @trails_parquet 
+(file_format => ff_parquet)
+order by point_id;
+
+select top 100 
+lng|| ' '||lat as coord_pair
+,'POINT('||coord_pair||')' as trail_point
+from cherry_creek_trail;
+
+create or replace view cherry_creek_trail as
+select 
+ $1:sequence_1 as point_id,
+ $1:trail_name::varchar as trail_name,
+ $1:latitude::number(11,8) as lng,
+ $1:longitude::number(11,8) as lat,
+ lng||' '||lat as coord_pair
+from @trails_parquet
+(file_format => ff_parquet)
+order by point_id;
+
+select 
+'LINESTRING('||
+listagg(coord_pair, ',') 
+within group (order by point_id)
+||')' as my_linestring
+from cherry_creek_trail
+--where point_id <= 10
+group by trail_name;
+
+create secure view denver_area_trails as
+select
+$1:features[0]:properties:Name::string as feature_name
+,$1:features[0]:geometry:coordinates::string as feature_coordinates
+,$1:features[0]:geometry::string as geometry
+,$1:features[0]:properties::string as feature_properties
+,$1:crs:properties:name::string as specs
+,$1 as whole_object
+from @trails_geojson (file_format => ff_json);
+
+select 
+'LINESTRING('||
+listagg(coord_pair, ',') 
+within group (order by point_id)
+||')' as my_linestring
+,st_length(to_geography(my_linestring)) as length_of_trail --this line is new! but it won't work!
+from cherry_creek_trail
+group by trail_name;
+
+select feature_name
+,st_length(to_geography(geometry)) as trail_length
+from denver_area_trails;
+
+select get_ddl('view', 'denver_area_trails');
+
+create or replace secure view DENVER_AREA_TRAILS(
+	FEATURE_NAME,
+	FEATURE_COORDINATES,
+	GEOMETRY,
+    TRAIL_LENGTH,
+	FEATURE_PROPERTIES,
+	SPECS,
+	WHOLE_OBJECT
+) as
+select
+$1:features[0]:properties:Name::string as feature_name
+,$1:features[0]:geometry:coordinates::string as feature_coordinates
+,$1:features[0]:geometry::string as geometry
+,st_length(to_geography(geometry)) as trail_length
+,$1:features[0]:properties::string as feature_properties
+,$1:crs:properties:name::string as specs
+,$1 as whole_object
+from @trails_geojson (file_format => ff_json);
+
+create view DENVER_AREA_TRAILS_2 as
+select 
+trail_name as feature_name
+,'{"coordinates":['||listagg('['||lng||','||lat||']',',')||'],"type":"LineString"}' as geometry
+,st_length(to_geography(geometry)) as trail_length
+from cherry_creek_trail
+group by trail_name;
+
+select feature_name, geometry, trail_length
+from DENVER_AREA_TRAILS
+union all
+select feature_name, geometry, trail_length
+from DENVER_AREA_TRAILS_2;
+
+--Add more GeoSpatial Calculations to get more GeoSpecial Information! 
+create secure view trails_and_boundaries as
+select feature_name
+, to_geography(replace(geometry,' ','')) as my_linestring
+, st_xmin(my_linestring) as min_eastwest
+, st_xmax(my_linestring) as max_eastwest
+, st_ymin(my_linestring) as min_northsouth
+, st_ymax(my_linestring) as max_northsouth
+, trail_length
+from DENVER_AREA_TRAILS
+union all
+select feature_name
+, to_geography(replace(geometry,' ','')) as my_linestring
+, st_xmin(my_linestring) as min_eastwest
+, st_xmax(my_linestring) as max_eastwest
+, st_ymin(my_linestring) as min_northsouth
+, st_ymax(my_linestring) as max_northsouth
+, trail_length
+from DENVER_AREA_TRAILS_2;
+
+select 'POLYGON(('||
+min(min_eastwest)||' '||max(max_northsouth)||','||
+max(max_eastwest)||' '||max(max_northsouth)||','||
+max(max_eastwest)||' '||min(min_northsouth)||','||
+min(min_eastwest)||' '||max(max_northsouth)||'))' as my_polygon
+from trails_and_boundaries;
+
+-- Melanie's Location into a 2 Variables (mc for melanies cafe)
+set mc_lat='-104.97300245114094';
+set mc_lng='39.76471253574085';
+
+--Confluence Park into a Variable (loc for location)
+set loc_lat='-105.00840763333615'; 
+set loc_lng='39.754141917497826';
+
+--Test your variables to see if they work with the Makepoint function
+select st_makepoint($mc_lat,$mc_lng) as melanies_cafe_point;
+select st_makepoint($loc_lat,$loc_lng) as confluent_park_point;
+
+--use the variables to calculate the distance from 
+--Melanie's Cafe to Confluent Park
+select st_distance(
+        st_makepoint($mc_lat,$mc_lng)
+        ,st_makepoint($loc_lat,$loc_lng)
+        ) as mc_to_cp;
+
+create function distance_to_mc(loc_lat number(38,32), loc_lng number(38,32))
+returns float as
+$$
+st_distance(
+        st_makepoint('-104.97300245114094','39.76471253574085')
+        ,st_makepoint(loc_lat,loc_lng)
+        )
+$$
+;
+
+--Tivoli Center into the variables 
+set tc_lat='-105.00532059763648'; 
+set tc_lng='39.74548137398218';
+
+select distance_to_mc($tc_lat,$tc_lng);
+
+
+CREATE OR REPLACE VIEW COMPETITION AS
+select * 
+from SONRA_DENVER_CO_USA_FREE.DENVER.V_OSM_DEN_AMENITY_SUSTENANCE
+where 
+    ((amenity in ('fast_food','cafe','restaurant','juice_bar'))
+    and 
+    (name ilike '%jamba%' or name ilike '%juice%'
+     or name ilike '%superfruit%'))
+ or 
+    (cuisine like '%smoothie%' or cuisine like '%juice%');
+
+    SELECT
+ name
+ ,cuisine
+ , ST_DISTANCE(
+    st_makepoint('-104.97300245114094','39.76471253574085')
+    , coordinates
+  ) AS distance_from_melanies
+ ,*
+FROM  competition
+ORDER by distance_from_melanies;
+
+CREATE OR REPLACE FUNCTION distance_to_mc(lat_and_lng GEOGRAPHY)
+  RETURNS FLOAT
+  AS
+  $$
+   st_distance(
+        st_makepoint('-104.97300245114094','39.76471253574085')
+        ,lat_and_lng
+        )
+  $$
+  ;
+
+  SELECT
+ name
+ ,cuisine
+ ,distance_to_mc(coordinates) AS distance_from_melanies
+ ,*
+FROM  competition
+ORDER by distance_from_melanies;
+
+CREATE or replace VIEW DENVER_BIKE_SHOPS AS
+SELECT name, coordinates ,distance_to_mc(coordinates) AS distance_to_melanies FROM SONRA_DENVER_CO_USA_FREE.DENVER.V_OSM_DEN_SHOP_OUTDOORS_AND_SPORT_VEHICLES
+WHERE SHOP = 'bicycle'
+order by distance_to_melanies desc;
+
+select * from denver_bike_shops;
+
+alter view trails.cherry_creek_trail
+rename to trails.v_cherry_creek_trail;
+
+create or replace external table T_CHERRY_CREEK_TRAIL(
+	my_filename varchar(50) as (metadata$filename::varchar(50))
+) 
+location= @trails.trails_parquet
+auto_refresh = true
+file_format = (type = parquet);
+
+select get_ddl('view','mels_smoothie_challenge_db.trails.v_cherry_creek_trail');
+
+create or replace external table mels_smoothie_challenge_db.trails.T_CHERRY_CREEK_TRAIL(
+	POINT_ID number as ($1:sequence_1::number),
+	TRAIL_NAME varchar(50) as  ($1:trail_name::varchar),
+	LNG number(11,8) as ($1:latitude::number(11,8)),
+	LAT number(11,8) as ($1:longitude::number(11,8)),
+	COORD_PAIR varchar(50) as (lng::varchar||' '||lat::varchar)
+) 
+location= @mels_smoothie_challenge_db.trails.trails_parquet
+auto_refresh = true
+file_format = mels_smoothie_challenge_db.trails.ff_parquet;
