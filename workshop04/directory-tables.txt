@@ -1,0 +1,22 @@
+use zenas_athleisure_db.products
+
+--Directory Tables
+select * from directory(@uni_klaus_clothing);
+
+-- Oh Yeah! We have to turn them on, first
+alter stage uni_klaus_clothing 
+set directory = (enable = true);
+
+--Now?
+select * from directory(@uni_klaus_clothing);
+
+--Oh Yeah! Then we have to refresh the directory table!
+alter stage uni_klaus_clothing refresh;
+list @uni_klaus_clothing;
+--Now?
+grant all privileges on stage uni_klaus_clothing to sysadmin;
+select * from directory(@uni_klaus_clothing);
+
+--testing UPPER and REPLACE functions on directory table
+select REPLACE(REPLACE(REPLACE(UPPER(RELATIVE_PATH),'/'),'_',' '),'.PNG') as product_name
+from directory(@uni_klaus_clothing);
