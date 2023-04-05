@@ -1,0 +1,14 @@
+create or replace view AGS_GAME_AUDIENCE.RAW.LOGS(
+	USER_EVENT,
+	USER_LOGIN,
+	DATETIME_ISO8601,
+	IP_ADDRESS,
+	RAW_LOG
+) as
+select raw_log:user_event::text as user_event
+,raw_log:user_login::text as user_login
+,raw_log:datetime_iso8601::timestamp_ntz as datetime_iso8601
+,raw_log:ip_address::text as ip_address
+,raw_log
+from game_logs
+where ip_address is not null;
